@@ -12,12 +12,12 @@ How to use it:
 1. Copy my_preffer_name.py into your applications/your_app/modules
 2. In your database modules, e.g db.py do:
     
-		from my_preffer_name import MyPrefferName, MyTable
-		
-		# change db = DAL(...) to
-		db = MyPrefferName('oracle://...')
+    from my_preffer_name import MyPrefferName, MyTable
+    
+    # change db = DAL(...) to
+    db = MyPrefferName('oracle://...')
 
-		...
+    ...
     db.define_table('comment',
         Field('name'),
         Field('description','text'),
@@ -25,12 +25,12 @@ How to use it:
         sequence_name='comment_seq', # default is comment_sequence
         trigger_name='comment_trg', # default is comment_trigger
         table_class=MyTable # notice i use customized Table, that support schema
-		)
-		# set migrate to True so that the table is will be created
-		db.comment.set_schema('other_app.', migrate=True, _adapter=db._adapter) 
+    )
+    # set migrate to True so that the table is will be created
+    db.comment.set_schema('other_app.', migrate=True, _adapter=db._adapter) 
 
-		# now you have a _tablename = 'other_app.comment'
-		# _sequence_name = 'other_app.comment_seq'
-		# _trigger_name = 'other_app.comment_trg'
-		
+    # now you have a _tablename = 'other_app.comment'
+    # _sequence_name = 'other_app.comment_seq'
+    # _trigger_name = 'other_app.comment_trg'
+        
 
