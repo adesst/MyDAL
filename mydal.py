@@ -34,6 +34,14 @@ class MyDAL(DAL):
             self._adapter = MyOracleAdapter(self,uri,pool_size,folder,
                                 db_codec, credential_decoder,
                                 driver_args or {}, adapter_args or {})
+        elif 'Postgre' in str(type(self._adapter)):
+            if not decode_credentials:
+                credential_decoder = lambda cred: cred
+            else:
+                credential_decoder = lambda cred: urllib.unquote(cred)
+            self._adapter = MyPostgreSQLAdapter(self,uri,pool_size,folder,
+                                db_codec, credential_decoder,
+                                driver_args or {}, adapter_args or {})
 
 class MyOracleAdapter(OracleAdapter):
 
@@ -108,6 +116,16 @@ class MyOracleAdapter(OracleAdapter):
             itables_to_merge={} #issue 490
             [itables_to_merge.update(dict.fromkeys(self.tables(t))) for t in ijoinon] # issue 490
             ijoinont = [t.first._tablename for t in ijoinon]
+            # start schema support 
+            dot_filtered_tbl = []
+            for tbl in ijoinont:
+                dot_tbl = tbl.split('.')
+                if len(dot_tbl)>1:
+                    dot_filtered_tbl.append(dot_tbl[1])
+                else:
+                    dot_filtered_tbl.append(tbl)
+            ijoinont =dot_filtered_tbl[:]
+            # end schema support
             [itables_to_merge.pop(t) for t in ijoinont if t in itables_to_merge] #issue 490
             iimportant_tablenames = ijoint + ijoinont + itables_to_merge.keys() # issue 490         
             iexcluded = [t for t in tablenames if not t in iimportant_tablenames]
@@ -122,6 +140,7 @@ class MyOracleAdapter(OracleAdapter):
             tables_to_merge={}
             [tables_to_merge.update(dict.fromkeys(self.tables(t))) for t in joinon]
             joinont = [t.first._tablename for t in joinon]
+            # start schema support 
             dot_filtered_tbl = []
             for tbl in joinont:
                 dot_tbl = tbl.split('.')
@@ -130,6 +149,7 @@ class MyOracleAdapter(OracleAdapter):
                 else:
                     dot_filtered_tbl.append(tbl)
             joinont =dot_filtered_tbl[:] 
+            # end schema support 
             [tables_to_merge.pop(t) for t in joinont if t in tables_to_merge]
             important_tablenames = joint + joinont + tables_to_merge.keys()
             excluded = [t for t in tablenames if not t in important_tablenames ]
