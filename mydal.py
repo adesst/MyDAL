@@ -1,5 +1,5 @@
 import re
-from gluon.dal import DAL, OracleAdapter, Expression, Table, Field, Query
+from gluon.dal import DAL, OracleAdapter, PostgreSQLAdapter, Expression, Table, Field, Query
 
 regex_type = re.compile('^([\w\_\:]+)')
 regex_dbname = re.compile('^(\w+)(\:\w+)*')
@@ -214,7 +214,6 @@ class MyOracleAdapter(OracleAdapter):
                                                'distinct', 'having', 'join',
                                                'for_update')):
             raise SyntaxError, 'invalid select attribute: %s' % key
-
         tablenames = self.tables(query)
         for field in fields:
             if isinstance(field, basestring) and regex_table_field.match(field):
