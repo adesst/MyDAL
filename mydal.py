@@ -1,5 +1,5 @@
 import re
-from gluon.dal import DAL, OracleAdapter, PostgreSQLAdapter, Expression, Table, Field, Query
+from gluon.dal import DAL, MySQLAdapter, OracleAdapter, PostgreSQLAdapter, Expression, Table, Field, Query
 
 regex_type = re.compile('^([\w\_\:]+)')
 regex_dbname = re.compile('^(\w+)(\:\w+)*')
@@ -74,6 +74,150 @@ class MyDAL(DAL):
             self._adapter = MyPostgreSQLAdapter(self,uri,pool_size,folder,
                                 db_codec, credential_decoder,
                                 driver_args or {}, adapter_args or {})
+
+class MyMySQLAdapter(MySQLAdapter):
+
+    def use_common_filters(self, query):
+        return (query and hasattr(query,'ignore_common_filters') and \
+                not query.ignore_common_filters)
+
+    def _select(self, query, fields, attributes):
+        for key in set(attributes.keys())-set(('orderby', 'groupby', 'limitby',
+                                               'required', 'cache', 'left',
+                                               'distinct', 'having', 'join',
+                                               'for_update')):
+            raise SyntaxError, 'invalid select attribute: %s' % key
+
+        tablenames = self.tables(query)
+        for field in fields:
+            if isinstance(field, basestring) and regex_table_field.match(field):
+                tn,fn = field.split('.')
+                field = self.db[tn][fn]
+            for tablename in self.tables(field):
+                if not tablename in tablenames:
+                    tablenames.append(tablename)
+
+        if use_common_filters(query):
+            query = self.common_filter(query,tablenames)
+
+        if len(tablenames) < 1:
+            raise SyntaxError, 'Set: no tables selected'
+        sql_f = ', '.join(map(self.expand, fields))
+        self._colnames = [c.strip() for c in sql_f.split(', ')]
+        if query:
+            sql_w = ' WHERE ' + self.expand(query)
+        else:
+            sql_w = ''
+        sql_o = ''
+        sql_s = ''
+        left = attributes.get('left', False)
+        inner_join = attributes.get('join', False)
+        distinct = attributes.get('distinct', False)
+        groupby = attributes.get('groupby', False)
+        orderby = attributes.get('orderby', False)
+        having = attributes.get('having', False)
+        limitby = attributes.get('limitby', False)
+        for_update = attributes.get('for_update', False)
+        if self.can_select_for_update is False and for_update is True:
+            raise SyntaxError, 'invalid select attribute: for_update'
+        if distinct is True:
+            sql_s += 'DISTINCT'
+        elif distinct:
+            sql_s += 'DISTINCT ON (%s)' % distinct
+        if inner_join:
+            icommand = self.JOIN()
+            if not isinstance(inner_join, (tuple, list)):
+                inner_join = [inner_join]
+            ijoint = [t._tablename for t in inner_join if not isinstance(t,Expression)]
+            ijoinon = [t for t in inner_join if isinstance(t, Expression)]
+            itables_to_merge={} #issue 490
+            [itables_to_merge.update(dict.fromkeys(self.tables(t))) for t in ijoinon] # issue 490
+            ijoinont = [t.first._tablename for t in ijoinon]
+            # start schema support 
+            dot_filtered_tbl = []
+            for tbl in ijoinont:
+                dot_tbl = tbl.split('.')
+                if len(dot_tbl)>1:
+                    dot_filtered_tbl.append(dot_tbl[1])
+                else:
+                    dot_filtered_tbl.append(tbl)
+            ijoinont =dot_filtered_tbl[:]
+            # end schema support
+            [itables_to_merge.pop(t) for t in ijoinont if t in itables_to_merge] #issue 490
+            iimportant_tablenames = ijoint + ijoinont + itables_to_merge.keys() # issue 490
+            iexcluded = [t for t in tablenames if not t in iimportant_tablenames]
+        if left:
+            join = attributes['left']
+            command = self.LEFT_JOIN()
+            if not isinstance(join, (tuple, list)):
+                join = [join]
+            joint = [t._tablename for t in join if not isinstance(t, Expression)]
+            joinon = [t for t in join if isinstance(t, Expression)]
+            #patch join+left patch (solves problem with ordering in left joins)
+            tables_to_merge={}
+            [tables_to_merge.update(dict.fromkeys(self.tables(t))) for t in joinon]
+            joinont = [t.first._tablename for t in joinon]
+            # start schema support 
+            dot_filtered_tbl = []
+            for tbl in joinont:
+                dot_tbl = tbl.split('.')
+                if len(dot_tbl)>1:
+                    dot_filtered_tbl.append(dot_tbl[1])
+                else:
+                    dot_filtered_tbl.append(tbl)
+            joinont =dot_filtered_tbl[:] 
+            # end schema support
+            [tables_to_merge.pop(t) for t in joinont if t in tables_to_merge]
+            important_tablenames = joint + joinont + tables_to_merge.keys()
+            excluded = [t for t in tablenames if not t in important_tablenames ]
+        def alias(t):
+            return str(self.db[t])
+        if inner_join and not left:
+            sql_t = ', '.join([alias(t) for t in iexcluded + itables_to_merge.keys()]) # issue 490
+            for t in ijoinon:
+                sql_t += ' %s %s' % (icommand, str(t))
+        elif not inner_join and left:
+            sql_t = ', '.join([alias(t) for t in excluded + tables_to_merge.keys()])
+            if joint:
+                sql_t += ' %s %s' % (command, ','.join([t for t in joint]))
+            for t in joinon:
+                sql_t += ' %s %s' % (command, str(t))
+        elif inner_join and left:
+            all_tables_in_query = set(important_tablenames + \
+                                      iimportant_tablenames + \
+                                      tablenames) # issue 490
+            tables_in_joinon = set(joinont + ijoinont) # issue 490
+            tables_not_in_joinon = all_tables_in_query.difference(tables_in_joinon) # issue 490
+            sql_t = ','.join([alias(t) for t in tables_not_in_joinon]) # issue 490
+            for t in ijoinon:
+                sql_t += ' %s %s' % (icommand, str(t))
+            if joint:
+                sql_t += ' %s %s' % (command, ','.join([t for t in joint]))
+            for t in joinon:
+                sql_t += ' %s %s' % (command, str(t))
+        else:
+            sql_t = ', '.join(alias(t) for t in tablenames)
+        if groupby:
+            if isinstance(groupby, (list, tuple)):
+                groupby = xorify(groupby)
+            sql_o += ' GROUP BY %s' % self.expand(groupby)
+            if having:
+                sql_o += ' HAVING %s' % attributes['having']
+        if orderby:
+            if isinstance(orderby, (list, tuple)):
+                orderby = xorify(orderby)
+            if str(orderby) == '<random>':
+                sql_o += ' ORDER BY %s' % self.RANDOM()
+            else:
+                sql_o += ' ORDER BY %s' % self.expand(orderby)
+        if limitby:
+            if not orderby and tablenames:
+                sql_o += ' ORDER BY %s' % ', '.join(['%s.%s'%(t,x) for t in tablenames for x in ((hasattr(self.db[t], '_primarykey') and self.db[t]._primarykey) or [self.db[t]._id.name])])
+            # oracle does not support limitby
+        sql = self.select_limitby(sql_s, sql_f, sql_t, sql_w, sql_o, limitby)
+        if for_update and self.can_select_for_update is True:
+            sql = sql.rstrip(';') + ' FOR UPDATE;'
+        return sql
 
 class MyPostgreSQLAdapter(PostgreSQLAdapter):
 
